@@ -1,17 +1,28 @@
-const Note = require("../models/Note");
-const asyncHandler = require("express-async-handler");
-const { update } = require("../models/User");
+const Note = require('../models/Note');
+const User = require('../models/User');
+const asyncHandler = require('express-async-handler');
 
 // @desc Get all notes
 // @route GET /notes
 // @access Private
 const getAllNotes = asyncHandler(async (req, res) => {
+  // Get all notes from MongoDB
   const notes = await Note.find().lean();
+
+  // If no notes
   if (!notes.length) {
-    return res.status(400).json({ message: "No notes found" });
+    return res.status(400).json({ message: 'No notes found' });
   }
 
-  res.json(notes);
+  // Add Username to each note before sending the response
+  const notesWithUser = await Promise.all(
+    notes.map(async (note) => {
+      const user = await User.findById(note.user).lean().exec();
+      return { ...note, username: user.username };
+    }),
+  );
+
+  res.json(notesWithUser);
 });
 
 // @desc Create new note
@@ -22,18 +33,24 @@ const createNewNote = asyncHandler(async (req, res) => {
 
   // Confirm data
   if (!user || !title || !text) {
-    return res.status(400).json({ message: "All fields are required" });
+    return res.status(400).json({ message: 'All fields are required' });
+  }
+
+  // Check for duplicate title
+  const duplicate = await Note.findOne({ title }).lean().exec();
+
+  if (duplicate) {
+    return res.status(409).json({ message: 'Duplicate note title' });
   }
 
   // Create and store new note
-  const noteObject = { user, title, text };
-  const note = await Note.create(noteObject);
+  const note = await Note.create({ user, title, text });
 
   if (note) {
     // created
-    res.status(201).json({ message: `New memo ${title} created` });
+    res.status(201).json({ message: `New note created` });
   } else {
-    res.status(400).json({ message: "Invalid user data received" });
+    res.status(400).json({ message: 'Invalid user data received' });
   }
 });
 
@@ -41,19 +58,29 @@ const createNewNote = asyncHandler(async (req, res) => {
 // @route PATCH /notes
 // @access Private
 const updateNote = asyncHandler(async (req, res) => {
-  const { id, title, text, completed } = req.body;
+  const { id, user, title, text, completed } = req.body;
 
-  //Confirm data
-  if (!id || !title || !text || typeof completed !== "boolean") {
-    return res.status(400).json({ message: "All fields are required" });
+  // Confirm data
+  if (!id || !user || !title || !text || typeof completed !== 'boolean') {
+    return res.status(400).json({ message: 'All fields are required' });
   }
 
+  // Confirm note exists to update
   const note = await Note.findById(id).exec();
 
   if (!note) {
-    return res.status(400).json({ message: "Note not found" });
+    return res.status(400).json({ message: 'Note not found' });
   }
 
+  // Check for duplicate title
+  const duplicate = await Note.findOne({ title }).lean().exec();
+
+  // Allow renaming of the original note
+  if (duplicate && duplicate?._id.toString() !== id) {
+    return res.status(409).json({ message: 'Duplicate note title' });
+  }
+
+  note.user = user;
   note.title = title;
   note.text = text;
   note.completed = completed;
@@ -67,21 +94,23 @@ const updateNote = asyncHandler(async (req, res) => {
 // @route DELETE /notes
 // @access Private
 const deleteNote = asyncHandler(async (req, res) => {
-  const { _id } = req.body;
+  const { id } = req.body;
 
-  if (!_id) {
-    return res.status(400).json({ message: "Note ID required" });
+  // Confirm data
+  if (!id) {
+    return res.status(400).json({ message: 'Note ID required' });
   }
 
-  const note = await Note.fineById(_id).exec();
+  // Confirm note exists to delete
+  const note = await Note.fineById(id).exec();
 
   if (!note) {
-    return res.status(400).json({ message: "Note not found" });
+    return res.status(400).json({ message: 'Note not found' });
   }
 
   const result = await note.deleteOne();
 
-  const reply = `Note ${result.title} deleted`;
+  const reply = `Note '${result.title}' with ID ${result._id} deleted`;
 
   res.json(reply);
 });
